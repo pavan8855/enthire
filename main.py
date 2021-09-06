@@ -1,16 +1,12 @@
-from json import JSONEncoder
-
 from cdktf import App, TerraformOutput, TerraformStack, Token
 from constructs import Construct
 
 from imports.aws import (AwsProvider, DataAwsCallerIdentity, EksNodeGroup,
-                         IamPolicy, IamRole, IamRolePolicyAttachment,
-                         SecurityGroup)
+                         IamPolicy, IamRole, IamRolePolicyAttachment)
 from imports.eks import Eks
-from imports.vpc import Vpc
-from main import IamRole
+from imports.helm import HelmProvider, Release
 
-# import imports.aws
+from imports.vpc import Vpc
 
 
 class MyStack(TerraformStack):
@@ -19,7 +15,7 @@ class MyStack(TerraformStack):
 
         # define resources here
         AwsProvider(self, 'Aws', region='us-west-2')
-        
+               
         iamrole = IamRole(self, "iamRole",
                 name="node_role",
                 assume_role_policy= '{ "Version": "2012-10-17", "Statement": [{ "Action": "sts:AssumeRole", "Effect": "Allow", "Sid":"", "Principal": { "Service": "ec2.amazonaws.com" } }] }'
@@ -33,7 +29,7 @@ class MyStack(TerraformStack):
                                  )
         iampollicy3 = IamRolePolicyAttachment(self, "iamRPA3", policy_arn="arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
                                                role=iamrole.name
-                                 )
+                                 )        
         
         my_vpc= Vpc(self, 'MyVpc',
             name='my-vpc',
@@ -43,35 +39,45 @@ class MyStack(TerraformStack):
             public_subnets=['10.0.101.0/24', '10.0.102.0/24', '10.0.103.0/24'],
             enable_nat_gateway=True,
             enable_dns_hostnames=True,
-            single_nat_gateway=True          
+            single_nat_gateway=True                      
         )
-
         
         my_eks= Eks(self, 'MyEks',
             cluster_name='my-eks',
-            subnets=Token().as_list(my_vpc.private_subnets_output),
+            subnets=Token().as_list(my_vpc.public_subnets_output),
             vpc_id=Token().as_string(my_vpc.vpc_id_output),
             manage_aws_auth=False,
-            cluster_version='1.17'            
-        )        
-        
-        node_group= EksNodeGroup(self, 'MyNodes',
-            node_group_name="my-node-group",
-            cluster_name='my-eks',
-            instance_types=["t2.micro"],
-            subnet_ids=Token().as_list(my_vpc.private_subnets_output),
-            scaling_config= [{
-               "desiredSize": 1, 
-               "maxSize": 1, 
-               "minSize": 1
-            }], 
-            node_role_arn=iamrole.arn, 
-            depends_on = [
-            iampollicy1,
-            iampollicy2,
-            iampollicy3
-            ]
+            cluster_version='1.21',
+            write_kubeconfig= False,
+            cluster_endpoint_public_access=True,
+            node_groups=([{
+                "desired_capacity": 3,
+                "iam_role_arn": iamrole.arn,
+                "instance_types": ["t2.micro"],
+                "max_capacity": 3,
+                "min_capacity": 1,
+                "subnets": Token().as_list(my_vpc.public_subnets_output),
+                "public_ip": True,
+                "depends_on":[iampollicy1, iampollicy2, iampollicy3]
+            }])
             )
+        
+        HelmProvider(self,'Helm',
+                     kubernetes=[{
+                            "host": my_eks.cluster_endpoint_output,
+                            "insecure": True,
+                            "exec":[{
+                                "apiVersion": "client.authentication.k8s.io/v1alpha1",
+                                "args": ["--region", "us-west-2", "eks", "get-token", "--cluster-name", my_eks.cluster_name],
+                                "command": "aws"
+                            }]
+                         }]
+            )
+        kdh = Release(self, 'kubernetes-dashboard',
+                      name= "my-dashboard",
+                      chart="../../../kubernetes-dashboard",
+                      namespace= "default"
+                    )      
         
         TerraformOutput(self, 'cluster_endpoint',
             value=my_eks.cluster_endpoint_output
