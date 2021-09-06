@@ -2,11 +2,12 @@
 EKS using terraform-cdk and kubernetes-dashboard helm chart.
 AWS, Helm providers are used
 kubernetes-dashboard helm chart is included in the repo.(Modified helm chart to enable metric server installation and readonly service account creation).
+Install aws-cli client.
 
 ##steps to execute
 1. pipenv install
-2. cdktf synth
-3. cdktf deploy
+3. cdktf synth
+4. cdktf deploy
 
 ##Login to dashboard
 1. open url https://34.219.242.77:30144/
